@@ -8,20 +8,37 @@ import type { OpportunityPayload } from './types.js';
 const PROCESSED_FILE = 'processed-grants.json';
 const DELETED_FILE = 'deleted-grants.json'; // Track deleted records
 
-function loadProcessed(): Set<string> {
+interface ProcessedRecord {
+  external_id: string;
+  last_processed: string;
+}
+
+function loadProcessed(): Map<string, Date> {
   if (!fs.existsSync(PROCESSED_FILE)) {
-    return new Set();
+    return new Map();
   }
   try {
     const data = JSON.parse(fs.readFileSync(PROCESSED_FILE, 'utf8'));
-    return new Set(data);
+    if (Array.isArray(data) && data.every((item) => typeof item === 'string')) {
+      const map = new Map<string, Date>();
+      for (const id of data) {
+        map.set(id, new Date(0));
+      }
+      return map;
+    }
+    const records = data as ProcessedRecord[];
+    return new Map(records.map((record) => [record.external_id, new Date(record.last_processed)]));
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
-function saveProcessed(ids: Set<string>) {
-  fs.writeFileSync(PROCESSED_FILE, JSON.stringify([...ids], null, 2));
+function saveProcessed(processed: Map<string, Date>) {
+  const records: ProcessedRecord[] = Array.from(processed.entries()).map(([external_id, date]) => ({
+    external_id,
+    last_processed: date.toISOString(),
+  }));
+  fs.writeFileSync(PROCESSED_FILE, JSON.stringify(records, null, 2));
 }
 
 function loadDeleted(): Set<string> {
@@ -96,7 +113,7 @@ async function main() {
   const deleted = loadDeleted();
   const stats = {
     fetched: 0,
-    skipped: 0,
+    skippedRecent: 0,
     processed: 0,
     created: 0,
     updated: 0,
@@ -115,6 +132,8 @@ async function main() {
     }
 
     const apiDelay = parseInt(process.env.API_DELAY_MS ?? '1000', 10);
+    const reprocessHours = parseInt(process.env.REPROCESS_AFTER_HOURS ?? '24', 10);
+    const now = new Date();
 
     for (const item of raw) {
       console.log('\n' + '═'.repeat(60));
@@ -123,15 +142,21 @@ async function main() {
 
       // Check if previously deleted by user
       if (deleted.has(item.externalId)) {
-        console.log('   ⏭️  Previously deleted by user, skipping');
+        console.log('   ⏭️  Previously deleted by user, skipping permanently');
         stats.deletedSkipped++;
         continue;
       }
 
-      if (processed.has(item.externalId)) {
-        console.log('   ⭐ Already processed recently, skipping');
-        stats.skipped++;
-        continue;
+      const lastProcessed = processed.get(item.externalId);
+      if (lastProcessed) {
+        const hoursSinceProcessed = (now.getTime() - lastProcessed.getTime()) / (1000 * 60 * 60);
+        if (hoursSinceProcessed < reprocessHours) {
+          console.log(`   ⏭️  Recently processed ${hoursSinceProcessed.toFixed(1)}h ago, skipping`);
+          stats.skippedRecent++;
+          continue;
+        } else {
+          console.log(`   🔄 Last processed ${hoursSinceProcessed.toFixed(1)}h ago, reprocessing...`);
+        }
       }
 
       try {
@@ -163,7 +188,7 @@ async function main() {
           stats.deletedSkipped++;
         } else {
           // Record created or updated
-          processed.add(item.externalId);
+          processed.set(item.externalId, new Date());
           saveProcessed(processed);
           
           if (result.action === 'created') {
@@ -189,14 +214,14 @@ async function main() {
   console.log('\n' + '═'.repeat(60));
   console.log('📊 RUN SUMMARY');
   console.log('─'.repeat(60));
-  console.log(`   Fetched:          ${stats.fetched}`);
-  console.log(`   Already Skipped:  ${stats.skipped}`);
-  console.log(`   Processed:        ${stats.processed}`);
-  console.log(`   Created:          ${stats.created}`);
-  console.log(`   Updated:          ${stats.updated}`);
-  console.log(`   Deleted Skipped:  ${stats.deletedSkipped}`);
-  console.log(`   Stale Skipped:    ${stats.stale}`);
-  console.log(`   Errors:           ${stats.errors}`);
+  console.log(`   Fetched:            ${stats.fetched}`);
+  console.log(`   Skipped (recent):   ${stats.skippedRecent}`);
+  console.log(`   Skipped (deleted):  ${stats.deletedSkipped}`);
+  console.log(`   Processed:          ${stats.processed}`);
+  console.log(`   Created:            ${stats.created}`);
+  console.log(`   Updated:            ${stats.updated}`);
+  console.log(`   Stale Skipped:      ${stats.stale}`);
+  console.log(`   Errors:             ${stats.errors}`);
   console.log('═'.repeat(60) + '\n');
 
   if (stats.errors === 0) {

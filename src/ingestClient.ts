@@ -37,61 +37,14 @@ function transformPayload(payload: OpportunityPayload) {
   };
 }
 
-/**
- * Checks if opportunity exists and whether it was deleted by user
- */
-async function checkOpportunityStatus(
-  externalId: string,
-  endpoint: string,
-  apiKey: string,
-): Promise<{ exists: boolean; isDeleted: boolean; id?: string }> {
-  try {
-    // Remove /ingest from endpoint for GET request
-    const baseEndpoint = endpoint.replace(/\/ingest$/, '');
-    const checkUrl = `${baseEndpoint}/ingest?external_id=${encodeURIComponent(externalId)}`;
-
-    const res = await fetch(checkUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-      },
-    });
-
-    if (res.status === 404) {
-      return { exists: false, isDeleted: false };
-    }
-
-    if (!res.ok) {
-      console.warn(`   [Ingest] Warning: Could not check status (${res.status}), will attempt to send`);
-      return { exists: false, isDeleted: false };
-    }
-
-    const json = await res.json();
-    
-    // Check if record was deleted
-    if (json.opportunity) {
-      const isDeleted = json.opportunity.deleted_at !== null;
-      return {
-        exists: true,
-        isDeleted: isDeleted,
-        id: json.opportunity.id,
-      };
-    }
-
-    return { exists: false, isDeleted: false };
-  } catch (error: any) {
-    console.warn(`   [Ingest] Warning: Status check failed: ${error.message}`);
-    return { exists: false, isDeleted: false };
-  }
-}
-
-export async function sendOpportunityToPlatform(payload: OpportunityPayload): Promise<{
+interface IngestResult {
   success: boolean;
   action: 'created' | 'updated' | 'skipped';
   reason?: string;
   id?: string;
-}> {
+}
+
+export async function sendOpportunityToPlatform(payload: OpportunityPayload): Promise<IngestResult> {
   const endpoint = process.env.GRANTS_INGEST_ENDPOINT_URL;
   const apiKey = process.env.GRANTS_INGEST_API_KEY;
 
@@ -99,31 +52,9 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
     throw new Error('GRANTS_INGEST_ENDPOINT_URL or GRANTS_INGEST_API_KEY is missing');
   }
 
-  // STEP 1: Check if record exists and was deleted
-  const status = await checkOpportunityStatus(payload.external_id, endpoint, apiKey);
-
-  if (status.exists && status.isDeleted) {
-    console.log(`   [Ingest] ⏭️  Skipped - Record was deleted by user (ID: ${status.id ?? 'unknown'})`);
-    const result: {
-      success: boolean;
-      action: 'created' | 'updated' | 'skipped';
-      reason?: string;
-      id?: string;
-    } = {
-      success: true,
-      action: 'skipped',
-      reason: 'deleted_by_user',
-    };
-    if (status.id) {
-      result.id = status.id;
-    }
-    return result;
-  }
-
-  // STEP 2: Send data (create or update)
   const body = transformPayload(payload);
 
-  console.log(`   [Ingest] ${status.exists ? 'Updating' : 'Creating'} opportunity...`);
+  console.log(`   [Ingest] Sending opportunity...`);
   console.log(`   [Ingest] Title: ${body.title}`);
   console.log(`   [Ingest] External ID: ${body.external_id}`);
 
@@ -143,26 +74,28 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
   }
 
   const json = await res.json().catch(() => ({}));
-  const action = json.action ?? (status.exists ? 'updated' : 'created');
-  
-  console.log(
-    `   [Ingest] ✅ ${action} - Opportunity ID: ${json.opportunity?.id ?? status.id ?? 'N/A'}`,
-  );
+  const apiAction = json.action ?? 'created';
 
-  const result: {
-    success: boolean;
-    action: 'created' | 'updated' | 'skipped';
-    reason?: string;
-    id?: string;
-  } = {
+  const result: IngestResult = {
     success: true,
-    action: action,
+    action: apiAction === 'skipped' ? 'skipped' : (apiAction as 'created' | 'updated'),
   };
-  
-  const opportunityId = json.opportunity?.id ?? status.id;
+
+  if (json.reason) {
+    result.reason = json.reason;
+  }
+
+  const opportunityId = json.opportunity?.id;
   if (opportunityId) {
     result.id = opportunityId;
   }
-  
+
+  if (result.action === 'skipped') {
+    console.log(`   [Ingest] ⏭️  Skipped - ${result.reason || 'unknown reason'}`);
+    return result;
+  }
+
+  console.log(`   [Ingest] ✅ ${result.action} - Opportunity ID: ${result.id ?? 'N/A'}`);
+
   return result;
 }
