@@ -24,12 +24,17 @@ const ApplicationDeadlineSchema = z
   });
 
 const OpportunitySchema = z.object({
-  external_id: z.string().optional(), // will be injected after parsing
+  external_id: z.string().optional(),
   title: z.string().min(3).max(280),
   summary: z.string().min(50).max(600),
   content: z
     .union([z.string(), z.array(z.string())])
-    .transform((val) => (Array.isArray(val) ? val.join('\n\n') : val))
+    .transform((val) => {
+      if (Array.isArray(val)) {
+        return val.filter(s => s && s.trim().length > 0).join('\n\n');
+      }
+      return val;
+    })
     .pipe(z.string().min(200)),
   program_type: z.enum([
     'grant',
@@ -69,9 +74,17 @@ const OpportunitySchema = z.object({
   benefits: z.array(z.string()).optional(),
   link_to_apply: z
     .string()
+    .transform((val) => {
+      if (!val || val === '' || val === 'Not specified') return 'Not specified';
+      // Ensure it's a complete URL
+      if (!val.startsWith('http://') && !val.startsWith('https://')) {
+        return 'Not specified';
+      }
+      return val;
+    })
     .refine(
       (val) => {
-        if (!val || val === 'Not specified') return true;
+        if (val === 'Not specified') return true;
         try {
           new URL(val);
           return true;
@@ -84,9 +97,13 @@ const OpportunitySchema = z.object({
     .optional(),
   contact_email: z
     .string()
+    .transform((val) => {
+      if (!val || val === 'Not specified') return '';
+      return val.trim();
+    })
     .refine(
       (val) => {
-        if (!val || val === '' || val === 'Not specified') return true;
+        if (!val || val === '') return true;
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
       },
       { message: 'contact_email must be valid email or empty string' },
@@ -112,38 +129,56 @@ YOUR TASK:
 Extract the following information and return it as valid JSON.
 
 CRITICAL FORMAT REQUIREMENTS:
-1. "content" MUST be a SINGLE STRING, NOT an array
-2. "content" must be at least 200 characters long
+1. "content" can be either:
+   - A SINGLE STRING with paragraphs separated by \\n\\n
+   - OR an array of strings (each paragraph) - we will merge them
+2. "content" must have at least 200 characters total
 3. "summary" must be at least 50 characters long
-4. "link_to_apply" must be a COMPLETE URL starting with http:// or https://, OR "Not specified"
-5. "contact_email" must be a VALID email format (user@domain.com), OR empty string if not found
-6. NEVER return arrays in string fields
-7. NEVER return empty strings for required fields - use "Not specified" instead
+4. "link_to_apply": 
+   - MUST start with http:// or https://
+   - If not found or incomplete URL, return "Not specified"
+5. "contact_email": 
+   - MUST be valid format (user@domain.com)
+   - If not found, return empty string ""
+   - Do NOT return "Not specified" for email
+6. If you cannot find information, use these defaults:
+   - funding_amount: "Not specified"
+   - participation_cost: "Not specified"
+   - link_to_apply: "Not specified"
+   - contact_email: "" (empty string)
+
+EXTRACTION PRIORITY:
+1. Look for EXPLICIT information first
+2. If not found, look in common locations:
+   - Application links: look for buttons, "Apply", "Submit", "How to Apply"
+   - Emails: look for info@, contact@, applications@, admissions@, enquiries@
+   - Funding: look for $, €, £ symbols with numbers
+   - Fees: look for "fee", "cost", "free", "no charge"
 
 FIELDS TO EXTRACT:
 {
-  "title": "Grant/Residency name (string)",
-  "summary": "Brief description (minimum 50 characters, string)",
-  "content": "Full detailed description as a SINGLE STRING (minimum 200 characters). Merge all paragraphs into ONE continuous string with \\n\\n between paragraphs.",
+  "title": "Grant/Residency name (string, required)",
+  "summary": "Brief description (minimum 50 characters, required)",
+  "content": "Full description - can be string OR array of strings (minimum 200 chars total)",
   "program_type": "grant|residency|open_call|fellowship|competition|fair_exhibition",
-  "organization_name": "Organization name (string)",
-  "country": "Country (string or null)",
-  "city": "City (string or null)",
-  "location": "Full location string (string or null)",
-  "funding_amount": "Grant amount (e.g., '€1,200/month', '$50,000', 'Free') or 'Not specified'",
-  "participation_cost": "Application/residency fees (e.g., '$30 application fee', 'Free') or 'Not specified'",
+  "organization_name": "Organization name (required)",
+  "country": "Country name or null",
+  "city": "City name or null",
+  "location": "Full location string or null",
+  "funding_amount": "Amount like '€1,200/month', '$50,000', 'Free', or 'Not specified'",
+  "participation_cost": "Fee like '$30 application fee', 'Free', or 'Not specified'",
   "application_deadline": "ISO 8601 date (YYYY-MM-DD) or 'TBD'",
   "program_dates": {
     "start_date": "ISO 8601 date or null",
     "end_date": "ISO 8601 date or null",
     "timezone": "string or null"
   },
-  "eligibility": ["requirement1", "requirement2"] or [],
-  "disciplines": ["visual arts", "music", etc.] or [],
-  "requirements": ["requirement1"] or [],
-  "benefits": ["benefit1"] or [],
-  "link_to_apply": "FULL URL (https://...) or 'Not specified'",
-  "contact_email": "valid@email.com or empty string",
+  "eligibility": ["requirement1", "requirement2"] or null,
+  "disciplines": ["visual arts", "music", etc.] or null,
+  "requirements": ["requirement1"] or null,
+  "benefits": ["benefit1"] or null,
+  "link_to_apply": "COMPLETE URL (https://...) or 'Not specified'",
+  "contact_email": "valid@email.com or empty string (NOT 'Not specified')",
   "language": "en",
   "source": {
     "name": "Organization name",
@@ -155,6 +190,67 @@ FIELDS TO EXTRACT:
   }
 }
 
+EXAMPLE VALID OUTPUT 1 (content as string):
+{
+  "title": "DYCP - Develop Your Creative Practice",
+  "summary": "Arts Council England grant supporting creative practitioners to develop their practice through research and skills development.",
+  "content": "The Develop Your Creative Practice (DYCP) grant is designed for individual creative practitioners to take time out to research, develop skills, explore new ideas, and develop their creative practice.\\n\\nYou can apply for between £2,000 and £10,000 to support a specific period of development and research activity. The funding can be used for training, research trips, mentorships, or time to develop new work.\\n\\nThe grant is open to individual artists, creative practitioners and individuals working in the creative industries in England.",
+  "program_type": "grant",
+  "organization_name": "Arts Council England",
+  "country": "United Kingdom",
+  "city": "London",
+  "funding_amount": "£2,000 - £10,000",
+  "participation_cost": "Free",
+  "application_deadline": "2025-01-28",
+  "link_to_apply": "https://www.artscouncil.org.uk/apply-for-a-grant",
+  "contact_email": "enquiries@artscouncil.org.uk",
+  "disciplines": ["visual arts", "performing arts", "literature", "music"],
+  "eligibility": ["Individual creative practitioners in England", "Minimum 2 years professional practice"],
+  "source": {
+    "name": "Arts Council England",
+    "url": "https://www.artscouncil.org.uk"
+  },
+  "fact_check": {
+    "confidence": "official_single_source"
+  }
+}
+
+EXAMPLE VALID OUTPUT 2 (content as array - will be merged):
+{
+  "title": "MacDowell Fellowship",
+  "summary": "Artist residency program in New Hampshire providing time, space and support for creative work across all disciplines.",
+  "content": [
+    "MacDowell offers residencies of 2-8 weeks for artists in all disciplines including architecture, visual arts, film/video, interdisciplinary arts, literature, music composition, theatre, and more.",
+    "Fellows receive private studios, three meals a day, and housing at no cost. The sole criterion for acceptance is artistic excellence.",
+    "About 300 artists are awarded Fellowships each year. Need-based stipends and travel reimbursement grants are available.",
+    "Apply by February 10, 2026 for Fall/Winter 2026-2027 residencies (September 1, 2026 - February 28, 2027)."
+  ],
+  "program_type": "residency",
+  "organization_name": "MacDowell",
+  "country": "United States",
+  "city": "Peterborough",
+  "location": "Peterborough, New Hampshire, United States",
+  "funding_amount": "Free (stipends up to $1,500 available based on need)",
+  "participation_cost": "$30 application fee (waivers available)",
+  "application_deadline": "2026-02-10",
+  "program_dates": {
+    "start_date": "2026-09-01",
+    "end_date": "2027-02-28"
+  },
+  "link_to_apply": "https://www.macdowell.org/apply/apply-for-fellowship",
+  "contact_email": "admissions@macdowell.org",
+  "disciplines": ["architecture", "visual arts", "film", "literature", "music", "theatre"],
+  "eligibility": ["Professional artists from all countries", "Emerging and established artists welcome"],
+  "benefits": ["Private studio", "Accommodation", "Three meals daily", "Travel grants available"],
+  "source": {
+    "name": "MacDowell",
+    "url": "https://www.macdowell.org"
+  },
+  "fact_check": {
+    "confidence": "official_single_source"
+  }
+}
+
 EXTRACTION RULES:
 1. FUNDING (funding_amount):
    - Look for: grant amounts, stipends, allowances, scholarships
@@ -163,7 +259,7 @@ EXTRACTION RULES:
    - If not found → "Not specified"
 
 2. PARTICIPATION COST (participation_cost):
-   - Look for: application fee, residency fee, rent
+   - Look for: application fee, residency fee, rent, subsidized cost
    - Distinguish: application fee vs accommodation cost
    - If "no fee" or "free" → "Free"
    - If not found → "Not specified"
@@ -177,40 +273,15 @@ EXTRACTION RULES:
 4. CONTACT EMAIL (contact_email):
    - Search for: info@, contact@, applications@, admissions@, enquiries@
    - MUST be valid email format
-   - If not found → return empty string ""
+   - If not found → return empty string "" (NOT "Not specified")
 
 5. CONTENT formatting:
-   - Merge all paragraphs into ONE string
-   - Use \\n\\n to separate paragraphs
+   - Can return as string OR array of strings
+   - If array: each item = one paragraph/section
+   - Minimum 200 characters total
    - Remove excessive whitespace
-   - Minimum 200 characters
 
-EXAMPLE VALID OUTPUT:
-{
-  "title": "DYCP - Develop Your Creative Practice",
-  "summary": "The Develop Your Creative Practice grant supports individuals to take time to focus on their creative development and research.",
-  "content": "The Develop Your Creative Practice (DYCP) grant is designed for individual creative practitioners to take time out to research, develop skills, explore new ideas, and develop their creative practice.\\n\\nYou can apply for between £2,000 and £10,000 to support a specific period of development and research activity. The funding can be used for training, research trips, mentorships, or time to develop new work.",
-  "program_type": "grant",
-  "organization_name": "Arts Council England",
-  "country": "United Kingdom",
-  "city": "London",
-  "funding_amount": "£2,000 - £10,000",
-  "participation_cost": "Free",
-  "application_deadline": "2025-01-28",
-  "link_to_apply": "https://www.artscouncil.org.uk/apply-for-a-grant",
-  "contact_email": "enquiries@artscouncil.org.uk",
-  "disciplines": ["visual arts", "performing arts", "literature"],
-  "eligibility": ["Individual creative practitioners in England"],
-  "source": {
-    "name": "Arts Council England",
-    "url": "https://www.artscouncil.org.uk"
-  },
-  "fact_check": {
-    "confidence": "official_single_source"
-  }
-}
-
-Return ONLY valid JSON, no markdown, no explanations.
+Return ONLY valid JSON, no markdown, no explanations, no code blocks.
 `;
 
 export async function generateOpportunityPayload(
@@ -227,23 +298,23 @@ export async function generateOpportunityPayload(
   let additionalContext = '';
 
   if (preprocessed.extractedLinks.applyLinks.length > 0) {
-    additionalContext += `\n\nEXTRACTED APPLICATION LINKS:\n${preprocessed.extractedLinks.applyLinks.join('\n')}`;
+    additionalContext += `\n\nEXTRACTED APPLICATION LINKS:\n${preprocessed.extractedLinks.applyLinks.slice(0, 5).join('\n')}`;
   }
 
   if (preprocessed.extractedEmails.length > 0) {
-    additionalContext += `\n\nEXTRACTED EMAILS:\n${preprocessed.extractedEmails.join(', ')}`;
+    additionalContext += `\n\nEXTRACTED EMAILS:\n${preprocessed.extractedEmails.slice(0, 3).join(', ')}`;
   }
 
   if (preprocessed.keyBlocks.funding) {
-    additionalContext += `\n\nFUNDING INFO BLOCK:\n${preprocessed.keyBlocks.funding}`;
+    additionalContext += `\n\nFUNDING INFO BLOCK:\n${preprocessed.keyBlocks.funding.substring(0, 300)}`;
   }
 
   if (preprocessed.keyBlocks.fees) {
-    additionalContext += `\n\nFEES INFO BLOCK:\n${preprocessed.keyBlocks.fees}`;
+    additionalContext += `\n\nFEES INFO BLOCK:\n${preprocessed.keyBlocks.fees.substring(0, 300)}`;
   }
 
   if (preprocessed.keyBlocks.deadline) {
-    additionalContext += `\n\nDEADLINE INFO BLOCK:\n${preprocessed.keyBlocks.deadline}`;
+    additionalContext += `\n\nDEADLINE INFO BLOCK:\n${preprocessed.keyBlocks.deadline.substring(0, 300)}`;
   }
 
   const userPrompt = `
@@ -254,51 +325,77 @@ Context:
 - URL: ${rawOpportunity.url}
 - Target language: ${defaultLanguage}
 
-REQUIRED FIELDS:
-- title, summary, content (HTML paragraphs)
-- program_type, organization_name
-- application_deadline (ISO or "TBD")
-- source { name, url }
+IMPORTANT EXTRACTION INSTRUCTIONS:
 
-CRITICAL - EXTRACT THESE FINANCIAL/CONTACT FIELDS:
-1. funding_amount: Look for grant/stipend amounts (€1,200/month, $50,000, etc.)
+1. CONTENT field:
+   - Can return as EITHER a string OR array of strings
+   - If array: each item = one paragraph
+   - Total must be 200+ characters
+   - Merge multiple sections if needed
+
+2. FINANCIAL FIELDS:
+   funding_amount: Look for grant/stipend/scholarship amounts
+   - Examples: "€1,200/month", "$50,000", "£2,000-£10,000"
    - If "free" or "no cost" → "Free"
    - If not found → "Not specified"
 
-2. participation_cost: Look for application fees, residency fees, rent
-   - Distinguish application fee vs accommodation cost
-   - If "no fee" → "Free"
+   participation_cost: Look for fees
+   - Examples: "$30 application fee", "€411/month rent"
+   - If "no fee" or "free" → "Free"
    - If not found → "Not specified"
 
-3. link_to_apply: Find "Apply", "Submit", "Application Form" buttons/links
-   - Must be actual URL
+3. APPLICATION LINK:
+   - Must be COMPLETE URL: https://example.com/apply
+   - Look for: Apply, Submit, Application Form buttons
+   - If found but no URL → "Not specified"
    - If not found → "Not specified"
 
-4. contact_email: Extract email addresses (admissions@, info@, applications@)
-   - Choose most relevant if multiple
-   - If not found → leave empty
+4. CONTACT EMAIL:
+   - Must be VALID email: user@domain.com
+   - Look for: info@, contact@, applications@, admissions@
+   - If not found → return empty string "" (NOT "Not specified")
 
-5. eligibility: Extract requirements (nationality, age, experience)
-   - Format as array of strings
+5. DEADLINE:
+   - Must be ISO 8601: YYYY-MM-DD
+   - If unclear → "TBD"
 
-6. disciplines: Extract art disciplines (visual arts, music, literature, etc.)
-   - Format as array of strings
+6. DISCIPLINES & ELIGIBILITY:
+   - Return as arrays of strings
+   - Examples: ["visual arts", "music"], ["emerging artists", "UK residents"]
 
-IMPORTANT:
-- Use ISO 8601 dates (YYYY-MM-DD). If no deadline is provided, return "TBD".
-- If programme dates are mentioned, fill program_dates.start/end.
-- Provide list arrays for eligibility/requirements/benefits/disciplines when possible.
-- fact_check.confidence MUST be "verified", "official_single_source", or "low_confidence" (no other values).
-- Scan the ENTIRE document; opportunities can be anywhere on the page.
-- DO NOT invent data - if not found, use "Not specified" or leave empty.
+7. FACT CHECK:
+   - confidence must be EXACTLY one of: "verified", "official_single_source", "low_confidence"
+   - Use "official_single_source" for direct organization pages
 
-Raw HTML (truncated to 25k chars):
+EXTRACTED DATA FROM HTML PREPROCESSOR:
+${preprocessed.extractedLinks.applyLinks.length > 0 ? `
+Application Links Found:
+${preprocessed.extractedLinks.applyLinks.slice(0, 3).join('\n')}
+` : ''}
+${preprocessed.extractedEmails.length > 0 ? `
+Emails Found:
+${preprocessed.extractedEmails.slice(0, 3).join(', ')}
+` : ''}
+${preprocessed.keyBlocks.funding ? `
+Funding Context:
+${preprocessed.keyBlocks.funding.substring(0, 200)}
+` : ''}
+${preprocessed.keyBlocks.fees ? `
+Fees Context:
+${preprocessed.keyBlocks.fees.substring(0, 200)}
+` : ''}
+${preprocessed.keyBlocks.deadline ? `
+Deadline Context:
+${preprocessed.keyBlocks.deadline.substring(0, 200)}
+` : ''}
+
+HTML Content (first 20k chars):
 ---
-${rawOpportunity.html.substring(0, 25000)}${rawOpportunity.html.length > 25000 ? '\n...(truncated)' : ''}
+${rawOpportunity.html.substring(0, 20000)}${rawOpportunity.html.length > 20000 ? '\n...(truncated)' : ''}
 ---
-${additionalContext}
 
-Return ONLY valid JSON.`;
+Return ONLY valid JSON, no markdown, no code blocks, no explanations.
+`;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -321,41 +418,64 @@ Return ONLY valid JSON.`;
       const parsed = JSON.parse(content);
       parsed.external_id = rawOpportunity.externalId;
 
-      // ENRICHMENT STEP 1: Fix content if it's an array
+      // ========== ENRICHMENT SECTION ==========
+
+      // STEP 1: Fix content if it's an array
       if (Array.isArray(parsed.content)) {
-        parsed.content = parsed.content.join('\n\n');
+        parsed.content = parsed.content
+          .filter((s: string) => s && s.trim().length > 0)
+          .join('\n\n');
       }
 
-      // ENRICHMENT STEP 2: Ensure minimum content length
+      // STEP 2: Ensure minimum content length
       if (!parsed.content || parsed.content.length < 200) {
         const fallbackText = preprocessed.cleanText.substring(0, 1000);
-        parsed.content = fallbackText || 'Details to be confirmed. Please visit the source URL.';
-      }
-
-      // ENRICHMENT STEP 3: Fix link_to_apply
-      if (!parsed.link_to_apply || parsed.link_to_apply === 'Not specified') {
-        if (preprocessed.extractedLinks.applyLinks.length > 0) {
-          parsed.link_to_apply = preprocessed.extractedLinks.applyLinks[0];
+        if (fallbackText.length >= 200) {
+          parsed.content = fallbackText;
         } else {
-          // Try to construct from base URL
-          try {
-            const baseUrl = new URL(rawOpportunity.url);
-            const commonPaths = ['/apply', '/application', '/submit', '/how-to-apply'];
-            // Check if any common path exists in HTML
-            const htmlLower = rawOpportunity.html.toLowerCase();
-            for (const path of commonPaths) {
-              if (htmlLower.includes(`href="${path}"`) || htmlLower.includes(`href='${path}'`)) {
-                parsed.link_to_apply = `${baseUrl.origin}${path}`;
-                break;
-              }
-            }
-          } catch {
-            // Keep as "Not specified"
+          // Try to use summary as base
+          const base = parsed.summary || 'Details available on website.';
+          parsed.content = `${base}\n\n${fallbackText}`.substring(0, 1000);
+          
+          // Ensure minimum length
+          if (parsed.content.length < 200) {
+            parsed.content = parsed.content + '\n\nFor complete information, please visit the organization\'s official website.';
           }
         }
       }
 
-      // ENRICHMENT STEP 4: Fix contact_email
+      // STEP 3: Fix link_to_apply
+      if (!parsed.link_to_apply || parsed.link_to_apply === 'Not specified' || !parsed.link_to_apply.startsWith('http')) {
+        if (preprocessed.extractedLinks.applyLinks.length > 0) {
+          // Use first extracted link
+          parsed.link_to_apply = preprocessed.extractedLinks.applyLinks[0];
+        } else {
+          // Try to find link in HTML
+          try {
+            const baseUrl = new URL(rawOpportunity.url);
+            const htmlLower = rawOpportunity.html.toLowerCase();
+            const commonPaths = ['/apply', '/application', '/submit', '/how-to-apply', '/open-call'];
+            
+            let foundPath = false;
+            for (const path of commonPaths) {
+              if (htmlLower.includes(`href="${path}"`) || htmlLower.includes(`href='${path}'`) || htmlLower.includes(`href=".${path}"`)) {
+                parsed.link_to_apply = `${baseUrl.origin}${path}`;
+                foundPath = true;
+                break;
+              }
+            }
+            
+            if (!foundPath) {
+              // Last resort: use source URL
+              parsed.link_to_apply = rawOpportunity.url;
+            }
+          } catch {
+            parsed.link_to_apply = 'Not specified';
+          }
+        }
+      }
+
+      // STEP 4: Fix contact_email
       if (!parsed.contact_email || parsed.contact_email === 'Not specified') {
         if (preprocessed.extractedEmails.length > 0) {
           parsed.contact_email = preprocessed.extractedEmails[0];
@@ -364,7 +484,8 @@ Return ONLY valid JSON.`;
           try {
             const domain = new URL(rawOpportunity.url).hostname;
             const commonPrefixes = ['info', 'contact', 'enquiries', 'applications', 'admissions'];
-            // Check if any common email pattern exists in HTML
+            
+            // Search for common email patterns in HTML
             for (const prefix of commonPrefixes) {
               const emailPattern = `${prefix}@${domain}`;
               if (rawOpportunity.html.includes(emailPattern)) {
@@ -372,24 +493,46 @@ Return ONLY valid JSON.`;
                 break;
               }
             }
+            
+            // If still not found, leave empty
+            if (!parsed.contact_email || parsed.contact_email === 'Not specified') {
+              parsed.contact_email = '';
+            }
           } catch {
-            // Leave empty
             parsed.contact_email = '';
           }
         }
       }
 
-      // ENRICHMENT STEP 5: Ensure link_to_apply is a complete URL
-      if (parsed.link_to_apply && parsed.link_to_apply !== 'Not specified') {
-        if (!parsed.link_to_apply.startsWith('http')) {
-          try {
-            const baseUrl = new URL(rawOpportunity.url);
-            parsed.link_to_apply = `${baseUrl.origin}${parsed.link_to_apply}`;
-          } catch {
-            parsed.link_to_apply = 'Not specified';
-          }
-        }
+      // STEP 5: Normalize email (remove "Not specified")
+      if (parsed.contact_email === 'Not specified') {
+        parsed.contact_email = '';
       }
+
+      // STEP 6: Default values for optional fields
+      if (!parsed.funding_amount) {
+        parsed.funding_amount = 'Not specified';
+      }
+      if (!parsed.participation_cost) {
+        parsed.participation_cost = 'Not specified';
+      }
+
+      // STEP 7: Ensure source is set
+      if (!parsed.source) {
+        parsed.source = {
+          name: rawOpportunity.sourceName,
+          url: rawOpportunity.url,
+        };
+      }
+
+      // STEP 8: Set default fact_check if missing
+      if (!parsed.fact_check) {
+        parsed.fact_check = {
+          confidence: 'official_single_source' as const,
+        };
+      }
+
+      // ========== END ENRICHMENT ==========
 
       const validated = OpportunitySchema.parse(parsed) as OpportunityPayload;
 
@@ -461,7 +604,7 @@ function calculateCompletenessScore(payload: OpportunityPayload): number {
   }
 
   // contact_email
-  if (payload.contact_email) {
+  if (payload.contact_email && payload.contact_email !== '') {
     foundCount++;
   }
 
@@ -487,4 +630,3 @@ function calculateCompletenessScore(payload: OpportunityPayload): number {
 
   return foundCount / totalFields;
 }
-
