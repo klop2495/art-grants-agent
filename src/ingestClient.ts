@@ -104,12 +104,20 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
 
   if (status.exists && status.isDeleted) {
     console.log(`   [Ingest] ⏭️  Skipped - Record was deleted by user (ID: ${status.id ?? 'unknown'})`);
-    return {
+    const result: {
+      success: boolean;
+      action: 'created' | 'updated' | 'skipped';
+      reason?: string;
+      id?: string;
+    } = {
       success: true,
       action: 'skipped',
       reason: 'deleted_by_user',
-      id: status.id ?? undefined,
     };
+    if (status.id) {
+      result.id = status.id;
+    }
+    return result;
   }
 
   // STEP 2: Send data (create or update)
@@ -141,9 +149,20 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
     `   [Ingest] ✅ ${action} - Opportunity ID: ${json.opportunity?.id ?? status.id ?? 'N/A'}`,
   );
 
-  return {
+  const result: {
+    success: boolean;
+    action: 'created' | 'updated' | 'skipped';
+    reason?: string;
+    id?: string;
+  } = {
     success: true,
     action: action,
-    id: json.opportunity?.id ?? status.id ?? undefined,
   };
+  
+  const opportunityId = json.opportunity?.id ?? status.id;
+  if (opportunityId) {
+    result.id = opportunityId;
+  }
+  
+  return result;
 }
