@@ -23,6 +23,30 @@ const ApplicationDeadlineSchema = z
     }
   });
 
+/**
+ * Removes HTML tags from text and converts to plain text
+ */
+function stripHtmlTags(text: string): string {
+  if (!text) return text;
+  
+  // Remove HTML tags
+  let cleaned = text.replace(/<[^>]*>/g, '');
+  
+  // Convert common HTML entities
+  cleaned = cleaned
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  
+  // Clean up extra whitespace
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  
+  return cleaned;
+}
+
 const OpportunitySchema = z.object({
   external_id: z.string().optional(),
   title: z.string().min(3).max(280),
@@ -147,6 +171,8 @@ YOUR TASK:
 Extract the following information and return it as valid JSON.
 
 CRITICAL FORMAT REQUIREMENTS:
+- DO NOT use HTML tags (no <p>, <div>, <br>, etc.) - use plain text with newlines
+- Use \\n for line breaks, not HTML tags
 1. "content" can be either:
    - A SINGLE STRING with paragraphs separated by \\n\\n
    - OR an array of strings (each paragraph) - we will merge them
@@ -449,6 +475,14 @@ Return ONLY valid JSON, no markdown, no code blocks, no explanations.
         parsed.content = parsed.content
           .filter((s: string) => s && s.trim().length > 0)
           .join('\n\n');
+      }
+
+      // STEP 1.5: Strip HTML tags from content and summary
+      if (parsed.content && typeof parsed.content === 'string') {
+        parsed.content = stripHtmlTags(parsed.content);
+      }
+      if (parsed.summary && typeof parsed.summary === 'string') {
+        parsed.summary = stripHtmlTags(parsed.summary);
       }
 
       // STEP 2: Ensure minimum content length
