@@ -16,6 +16,7 @@
     "cheerio": "^1.1.2",
     "dotenv": "^17.2.3",
     "openai": "^6.9.0",
+    "rss-parser": "^3.13.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
