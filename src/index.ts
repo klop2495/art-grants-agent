@@ -30,11 +30,18 @@ function startOfToday(): Date {
 
 function parseDate(value?: string | null): Date | null {
   if (!value) return null;
-  const parsed = Date.parse(value);
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toUpperCase() === 'TBD') {
+    return null;
+  }
+
+  const parsed = Date.parse(trimmed);
   return Number.isNaN(parsed) ? null : new Date(parsed);
 }
 
-function isRelevant(payload: OpportunityPayload): { relevant: boolean; reason?: string } {
+function isRelevant(
+  payload: OpportunityPayload,
+): { relevant: boolean; reason?: string; note?: string } {
   const today = startOfToday();
   const deadline = parseDate(payload.application_deadline);
   const programStart = parseDate(payload.program_dates?.start_date);
@@ -46,6 +53,10 @@ function isRelevant(payload: OpportunityPayload): { relevant: boolean; reason?: 
 
   if (deadlineUpcoming || programUpcoming) {
     return { relevant: true };
+  }
+
+  if (!deadline && !programStart && !programEnd) {
+    return { relevant: true, note: 'No explicit deadline/program dates; keeping for manual review' };
   }
 
   return {
@@ -110,6 +121,10 @@ async function main() {
           console.log(`   ⚠️  Skipping ${relevance.reason}`);
           stats.stale++;
           continue;
+        }
+
+        if (relevance.note) {
+          console.log(`   ℹ️  ${relevance.note}`);
         }
 
         await sendOpportunityToPlatform(payload);

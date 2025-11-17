@@ -4,10 +4,10 @@ Node.js + TypeScript worker that collects grant / residency / open-call opportun
 
 ## Features
 
-- Fetches HTML pages from trusted international sources (NYFA, Creative Capital, ResArtis, etc.)
-- GPT prompt tuned for opportunity data: deadlines, funding, eligibility, requirements.
-- Filters out outdated calls (deadline already passed).
-- Emits structured payload and posts to `GRANTS_INGEST_ENDPOINT_URL`.
+- Сканирует сеть за счёт комбинации целевых институций (музеи, фонды, резиденции) и веб-поиска (Bing API) с ограничением по доменам.
+- GPT-промпт заточен под данные возможностей: дедлайны, финансирование, eligibility, требования.
+- Фильтрует устаревшие приглашения (истёкший дедлайн или прошедшие даты программы).
+- Формирует структурированный payload и отправляет его на `GRANTS_INGEST_ENDPOINT_URL`.
 
 ## Setup
 
@@ -27,6 +27,8 @@ OPENAI_MODEL=gpt-4o
 MAX_OPPORTUNITIES_PER_RUN=20
 API_DELAY_MS=1200
 DEFAULT_LANGUAGE=en
+SEARCH_API_KEY=<bing-or-other-search-key>
+SEARCH_API_ENDPOINT=https://api.bing.microsoft.com/v7.0/search
 ```
 
 ## Usage
@@ -44,7 +46,11 @@ npm run dev
 
 ## Updating Sources
 
-`src/fetchSources.ts` contains a static list of pages. Replace with current URLs of specific grant/residency announcements for best results. For automation, extend the file with RSS parsers or web scrapers.
+- `src/fetchSources.ts` описывает два слоя:
+  - `DIRECT_INSTITUTION_PAGES` — список конкретных страниц музеев/фондов/резиденций.
+  - `INSTITUTION_SEARCH_CONFIGS` — конфигурация поисковых запросов (через Bing API) по доменам институций.
+- Чтобы добавить новую программу, просто расширьте один из списков и при необходимости настройте DOM‑селектор.
+- Агент больше не читает агрегаторы (NYFA, ArtConnect и т.п.), чтобы избегать копирования чужих лент.
 
 ## GitHub Actions
 

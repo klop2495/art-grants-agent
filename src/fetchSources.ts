@@ -1,92 +1,153 @@
 import * as cheerio from 'cheerio';
-import Parser from 'rss-parser';
 import type { RawOpportunity } from './types.js';
+import { searchWeb } from './searchClient.js';
 
-interface InstitutionalSource {
+interface DirectInstitutionPage {
   sourceName: string;
   url: string;
-  notes?: string;
+  selector?: string;
 }
 
-interface RssSource {
-  sourceName: string;
-  feedUrl: string;
-  keywordFilters?: string[];
-  limit?: number;
+interface InstitutionSearchConfig {
+  institution: string;
+  queries: string[];
+  domains?: string[];
+  maxResults?: number;
 }
 
-interface ListingSource {
-  sourceName: string;
-  url: string;
-  linkSelector: string;
-  includeKeywords?: string[];
-  excludeKeywords?: string[];
-  absoluteBase?: string;
-  limit?: number;
-}
-
-const KEYWORDS = ['grant', 'residency', 'open call', 'artists', 'fellowship', 'competition'];
-
-const institutionalSources: InstitutionalSource[] = [
+const DIRECT_INSTITUTION_PAGES: DirectInstitutionPage[] = [
   {
-    sourceName: 'Residency Unlimited',
-    url: 'https://residencyunlimited.org/opportunities/',
+    sourceName: 'Rijksakademie Residency',
+    url: 'https://www.rijksakademie.nl/en/residency/apply',
+    selector: 'main article, main',
   },
   {
-    sourceName: 'On the Move',
-    url: 'https://on-the-move.org/funding',
+    sourceName: 'Delfina Foundation Programmes',
+    url: 'https://www.delfinafoundation.com/programme/open-calls/',
   },
   {
-    sourceName: 'ArtConnect',
-    url: 'https://artconnect.com/opportunities',
+    sourceName: 'ISCP Residencies',
+    url: 'https://iscp-nyc.org/apply',
   },
   {
-    sourceName: 'Venice Biennale College',
-    url: 'https://www.labiennale.org/en/biennale-college',
+    sourceName: 'Skowhegan School of Painting & Sculpture',
+    url: 'https://www.skowheganart.org/apply',
+  },
+  {
+    sourceName: 'Banff Centre Visual Arts Residencies',
+    url: 'https://www.banffcentre.ca/programs/visual-arts',
+  },
+  {
+    sourceName: 'Sharjah Art Foundation Residencies',
+    url: 'https://www.sharjahart.org/programmes/residencies',
+  },
+  {
+    sourceName: 'Asia Cultural Council Grants',
+    url: 'https://www.asiaculturalcouncil.org/fellowships/apply',
+  },
+  {
+    sourceName: 'Fluxus Art Projects',
+    url: 'https://www.fluxusartprojects.com/open-call',
   },
 ];
 
-const rssSources: RssSource[] = [
+const INSTITUTION_SEARCH_CONFIGS: InstitutionSearchConfig[] = [
   {
-    sourceName: 'ArtConnect RSS',
-    feedUrl: 'https://artconnect.com/feed',
-    keywordFilters: KEYWORDS,
-    limit: 10,
+    institution: 'Rijksakademie Residency',
+    queries: [
+      'Rijksakademie residency open call 2026',
+      'Rijksakademie application deadline visual arts',
+    ],
+    domains: ['rijksakademie.nl'],
   },
   {
-    sourceName: 'TransArtists RSS',
-    feedUrl: 'https://www.transartists.org/feeds/opportunities',
-    keywordFilters: KEYWORDS,
-    limit: 10,
-  },
-];
-
-const listingSources: ListingSource[] = [
-  {
-    sourceName: 'NYFA Listings',
-    url: 'https://www.nyfa.org/opportunities',
-    linkSelector: 'article a',
-    includeKeywords: KEYWORDS,
-    absoluteBase: 'https://www.nyfa.org',
-    limit: 8,
+    institution: 'Delfina Foundation',
+    queries: [
+      'Delfina Foundation residency open call',
+      'Delfina Foundation international programme 2026',
+    ],
+    domains: ['delfinafoundation.com'],
   },
   {
-    sourceName: 'Creative Capital Listings',
-    url: 'https://creative-capital.org/category/opportunities/',
-    linkSelector: 'article a',
-    includeKeywords: KEYWORDS,
-    limit: 8,
+    institution: 'Sharjah Art Foundation',
+    queries: [
+      'Sharjah Art Foundation residency application',
+      'Sharjah Art Foundation grants 2026',
+    ],
+    domains: ['sharjahart.org'],
+  },
+  {
+    institution: 'Banff Centre',
+    queries: [
+      'Banff Centre visual arts residency 2026',
+      'Banff Centre artist residency apply',
+    ],
+    domains: ['banffcentre.ca'],
+  },
+  {
+    institution: 'Asia Cultural Council',
+    queries: [
+      'Asia Cultural Council fellowship 2026',
+      'Asia Cultural Council grant application',
+    ],
+    domains: ['asiaculturalcouncil.org'],
+  },
+  {
+    institution: 'Goethe-Institut Cultural Programmes',
+    queries: [
+      'Goethe-Institut residency visual arts',
+      'Goethe-Institut grant open call',
+    ],
+    domains: ['goethe.de'],
+  },
+  {
+    institution: 'International Studio & Curatorial Program (ISCP)',
+    queries: [
+      'ISCP residency open call',
+      'ISCP residency funding 2026',
+    ],
+    domains: ['iscp-nyc.org'],
+  },
+  {
+    institution: 'EU Creative Europe Culture',
+    queries: [
+      'Creative Europe Culture grant call 2026',
+      'Creative Europe visual arts cooperation project',
+    ],
+    domains: ['culture.ec.europa.eu', 'ec.europa.eu'],
+  },
+  {
+    institution: 'Goethe-Institut Project Space',
+    queries: ['Goethe project space grant', 'Goethe Institut call for proposals arts'],
+    domains: ['goethe.de'],
+  },
+  {
+    institution: 'Sharjah Performing Arts Academy',
+    queries: ['Sharjah performing arts residency', 'Sharjah residency open call'],
+    domains: ['sharjah.gov.ae', 'spaa.ae'],
   },
 ];
 
 const DOMAIN_SELECTORS: Record<string, string> = {
-  'residencyunlimited.org': 'article, main, .post',
-  'on-the-move.org': 'article, main, .field--name-body',
-  'artconnect.com': 'article, main, .opportunity-detail',
-  'labiennale.org': 'article, main, .detail-page',
-  'nyfa.org': 'article, main, .entry-content',
-  'creative-capital.org': 'article, main, .post-content',
+  'asiaculturalcouncil.org': 'article, main',
+  'banffcentre.ca': 'article, main, .layout',
+  'delfinafoundation.com': 'article, main, .content-area',
+  'fluxusartprojects.com': 'article, main',
+  'goethe.de': 'article, main, .text',
+  'iscp-nyc.org': 'article, main, .entry-content',
+  'rijksakademie.nl': 'article, main',
+  'sharjahart.org': 'article, main, .section-content',
+  'skowheganart.org': 'article, main, .entry-content',
 };
+
+const BLOCKED_DOMAINS = new Set([
+  'artconnect.com',
+  'nyfa.org',
+  'creative-capital.org',
+  'transartists.org',
+  'residencyunlimited.org',
+  'on-the-move.org',
+]);
 
 function makeExternalId(sourceName: string, url: string): string {
   const base = `${sourceName}-${url}`;
@@ -130,139 +191,92 @@ async function fetchHtml(url: string): Promise<string | null> {
   }
 }
 
-async function fetchInstitutionalSources(max: number): Promise<RawOpportunity[]> {
+async function fetchDirectInstitutionPages(max: number): Promise<RawOpportunity[]> {
   const results: RawOpportunity[] = [];
-  for (const src of institutionalSources.slice(0, max)) {
-    console.log(`\n[fetchSources] 📥 Fetching: ${src.sourceName}`);
+  for (const src of DIRECT_INSTITUTION_PAGES) {
+    if (results.length >= max) break;
+    console.log(`\n[fetchSources] 🏛️ Direct: ${src.sourceName}`);
     const html = await fetchHtml(src.url);
     if (!html) continue;
 
     const $ = cheerio.load(html);
-    const selector = getSelector(src.url);
+    const selector = src.selector || getSelector(src.url);
     const articleHtml = $(selector).html() || html;
-    const externalId = makeExternalId(src.sourceName, src.url);
-
     results.push({
       url: src.url,
       html: articleHtml,
       sourceName: src.sourceName,
-      externalId,
+      externalId: makeExternalId(src.sourceName, src.url),
     });
-    console.log(`   ✅ Fetched ${articleHtml.length} chars`);
+    console.log(`   ✅ Captured ${articleHtml.length} chars`);
   }
   return results;
 }
 
-async function fetchRssSources(max: number): Promise<RawOpportunity[]> {
-  const parser = new Parser();
-  const rows: RawOpportunity[] = [];
+function isBlocked(url: string): boolean {
+  try {
+    const domain = new URL(url).hostname.replace('www.', '');
+    return BLOCKED_DOMAINS.has(domain);
+  } catch {
+    return false;
+  }
+}
 
-  for (const feed of rssSources) {
-    console.log(`\n[fetchSources] 📡 RSS: ${feed.sourceName}`);
-    try {
-      const data = await parser.parseURL(feed.feedUrl);
-      const items = (data.items ?? []).slice(0, feed.limit ?? max);
+async function fetchInstitutionSearchResults(max: number): Promise<RawOpportunity[]> {
+  const collected: RawOpportunity[] = [];
 
-      for (const item of items) {
-        const link = item.link;
-        if (!link) continue;
-        const title = item.title?.toLowerCase() ?? '';
-        if (
-          feed.keywordFilters &&
-          !feed.keywordFilters.some((keyword) => title.includes(keyword.toLowerCase()))
-        ) {
+  if (!process.env.SEARCH_API_KEY) {
+    console.warn('   ⚠️  SEARCH_API_KEY missing, skipping institutional search.');
+    return collected;
+  }
+
+  for (const config of INSTITUTION_SEARCH_CONFIGS) {
+    for (const query of config.queries) {
+      if (collected.length >= max) break;
+      console.log(`\n[fetchSources] 🔎 Search: ${config.institution} — "${query}"`);
+      const searchOptions: Parameters<typeof searchWeb>[1] = {
+        count: config.maxResults ?? 3,
+        freshness: 'Month',
+      };
+      if (config.domains) {
+        searchOptions.domains = config.domains;
+      }
+
+      const searchResults = await searchWeb(query, searchOptions);
+
+      for (const result of searchResults) {
+        if (!result.url || isBlocked(result.url)) {
           continue;
         }
+        if (collected.length >= max) break;
 
-        const html = await fetchHtml(link);
+        const html = await fetchHtml(result.url);
         if (!html) continue;
-        const selector = getSelector(link);
+        const selector = getSelector(result.url);
         const $ = cheerio.load(html);
         const articleHtml = $(selector).html() || html;
 
-        rows.push({
-          url: link,
+        collected.push({
+          url: result.url,
           html: articleHtml,
-          sourceName: feed.sourceName,
-          externalId: makeExternalId(feed.sourceName, link),
+          sourceName: config.institution,
+          externalId: makeExternalId(config.institution, result.url),
         });
-        console.log(`   ▸ RSS entry added: ${item.title}`);
+        console.log(`   ▸ Captured search result: ${result.url}`);
       }
-    } catch (err: any) {
-      console.error(`   ❌ RSS error: ${err.message}`);
     }
   }
 
-  return rows.slice(0, max);
-}
-
-async function fetchListingSources(max: number): Promise<RawOpportunity[]> {
-  const results: RawOpportunity[] = [];
-
-  for (const listing of listingSources) {
-    console.log(`\n[fetchSources] 📄 Listing: ${listing.sourceName}`);
-    const html = await fetchHtml(listing.url);
-    if (!html) continue;
-
-    const $ = cheerio.load(html);
-    const links = new Set<string>();
-
-    $(listing.linkSelector)
-      .slice(0, listing.limit ?? max)
-      .each((_, el) => {
-        const href = $(el).attr('href');
-        if (!href) return;
-        let absolute = href;
-        if (listing.absoluteBase && href.startsWith('/')) {
-          absolute = listing.absoluteBase + href;
-        }
-        links.add(absolute);
-      });
-
-    for (const link of links) {
-      const lower = link.toLowerCase();
-      if (
-        listing.includeKeywords &&
-        !listing.includeKeywords.some((keyword) => lower.includes(keyword.replace(/\s+/g, '-')))
-      ) {
-        continue;
-      }
-      if (
-        listing.excludeKeywords &&
-        listing.excludeKeywords.some((keyword) => lower.includes(keyword))
-      ) {
-        continue;
-      }
-
-      const detailHtml = await fetchHtml(link);
-      if (!detailHtml) continue;
-
-      const selector = getSelector(link);
-      const $detail = cheerio.load(detailHtml);
-      const articleHtml = $detail(selector).html() || detailHtml;
-
-      results.push({
-        url: link,
-        html: articleHtml,
-        sourceName: listing.sourceName,
-        externalId: makeExternalId(listing.sourceName, link),
-      });
-      console.log(`   ▸ Listing entry added: ${link}`);
-    }
-  }
-
-  return results.slice(0, max);
+  return collected;
 }
 
 export async function fetchRawOpportunities(): Promise<RawOpportunity[]> {
   const max = parseInt(process.env.MAX_OPPORTUNITIES_PER_RUN ?? '20', 10);
 
-  const institutional = await fetchInstitutionalSources(max);
-  const rss = await fetchRssSources(max);
-  const listings = await fetchListingSources(max);
+  const direct = await fetchDirectInstitutionPages(Math.ceil(max / 2));
+  const institutionalSearch = await fetchInstitutionSearchResults(max);
 
-  const combined = [...institutional, ...rss, ...listings];
-  // Deduplicate by externalId
+  const combined = [...direct, ...institutionalSearch];
   const deduped = new Map<string, RawOpportunity>();
   for (const item of combined) {
     if (!deduped.has(item.externalId)) {

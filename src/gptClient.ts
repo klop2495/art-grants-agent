@@ -6,6 +6,22 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
+const ApplicationDeadlineSchema = z
+  .string()
+  .transform((value) => value.trim())
+  .superRefine((value, ctx) => {
+    if (value.toUpperCase() === 'TBD') {
+      return;
+    }
+
+    if (Number.isNaN(Date.parse(value))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'application_deadline must be ISO 8601 date or "TBD"',
+      });
+    }
+  });
+
 const OpportunitySchema = z.object({
   external_id: z.string().optional(), // will be injected after parsing
   title: z.string().min(10).max(280),
@@ -25,11 +41,7 @@ const OpportunitySchema = z.object({
   city: z.string().optional(),
   funding_amount: z.string().optional(),
   participation_cost: z.string().optional(),
-  application_deadline: z
-    .string()
-    .refine((value) => !Number.isNaN(Date.parse(value)), {
-      message: 'application_deadline must be ISO 8601 date',
-    }),
+  application_deadline: ApplicationDeadlineSchema,
   program_dates: z
     .object({
       start_date: z
@@ -76,13 +88,16 @@ Your job:
 
 CRITICAL RULES
 - NEVER invent details, amounts, or dates.
-- ALWAYS include application_deadline (ISO format).
-- If deadline is not explicit, infer the closest precise date (e.g., "15 January 2026").
+- ALWAYS include application_deadline.
+- Preferred format is ISO 8601 (YYYY-MM-DD). If the source does not state a deadline at all, output the literal string "TBD".
+- If deadline text is ambiguous, infer the closest precise date (e.g., "15 January 2026") using the source context.
 - Highlight whether the programme requires fees or offers funding.
 - Use neutral tone; remove promotional language.
 - Extract eligibility (individuals / collectives / by region) as bullet points.
 - Source info (name + URL) must reference the originating organisation page.
 - If the announcement is clearly outdated (deadline in the past), set fact_check.notes = "outdated" and leave other fields as-is.
+- fact_check.confidence MUST be one of: "verified", "official_single_source", "low_confidence". Default to "official_single_source" when unsure.
+- Examine ALL sections of the provided HTML (not just the opening paragraphs); opportunities can appear anywhere on the page.
 
 CATEGORY MAPPING
 - grants, funds, awards → "grant"
@@ -121,10 +136,12 @@ REQUIRED FIELDS:
 - source { name, url }
 
 IMPORTANT:
-- Use ISO 8601 dates (YYYY-MM-DD).
+- Use ISO 8601 dates (YYYY-MM-DD). If no deadline is provided, return "TBD".
 - If programme dates are mentioned, fill program_dates.start/end.
 - Provide list arrays for eligibility/requirements/benefits when possible.
 - link_to_apply should be the explicit application URL if present.
+- fact_check.confidence MUST be "verified", "official_single_source", or "low_confidence" (no other values).
+- Ensure the entire document is scanned; opportunities might be embedded deep in the page.
 
 Raw HTML (truncated to 30k chars):
 ---

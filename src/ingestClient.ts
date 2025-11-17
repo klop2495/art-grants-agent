@@ -1,6 +1,16 @@
 import type { OpportunityPayload } from './types.js';
 
+function normalizeDeadline(value?: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.toUpperCase() === 'TBD') return null;
+  return trimmed;
+}
+
 function transformPayload(payload: OpportunityPayload) {
+  const normalizedDeadline = normalizeDeadline(payload.application_deadline);
+
   return {
     external_id: payload.external_id,
     title: payload.title,
@@ -13,7 +23,7 @@ function transformPayload(payload: OpportunityPayload) {
     city: payload.city,
     funding_amount: payload.funding_amount,
     participation_cost: payload.participation_cost,
-    application_deadline: payload.application_deadline,
+    application_deadline: normalizedDeadline,
     program_dates: payload.program_dates,
     eligibility: payload.eligibility,
     disciplines: payload.disciplines,
