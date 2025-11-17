@@ -3,4 +3,5 @@ dist
 .env
 .env.local
 processed-grants.json
+deleted-grants.json
 

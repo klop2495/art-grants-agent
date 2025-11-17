@@ -37,7 +37,61 @@ function transformPayload(payload: OpportunityPayload) {
   };
 }
 
-export async function sendOpportunityToPlatform(payload: OpportunityPayload): Promise<void> {
+/**
+ * Checks if opportunity exists and whether it was deleted by user
+ */
+async function checkOpportunityStatus(
+  externalId: string,
+  endpoint: string,
+  apiKey: string,
+): Promise<{ exists: boolean; isDeleted: boolean; id?: string }> {
+  try {
+    // Remove /ingest from endpoint for GET request
+    const baseEndpoint = endpoint.replace(/\/ingest$/, '');
+    const checkUrl = `${baseEndpoint}/ingest?external_id=${encodeURIComponent(externalId)}`;
+
+    const res = await fetch(checkUrl, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+    });
+
+    if (res.status === 404) {
+      return { exists: false, isDeleted: false };
+    }
+
+    if (!res.ok) {
+      console.warn(`   [Ingest] Warning: Could not check status (${res.status}), will attempt to send`);
+      return { exists: false, isDeleted: false };
+    }
+
+    const json = await res.json();
+    
+    // Check if record was deleted
+    if (json.opportunity) {
+      const isDeleted = json.opportunity.deleted_at !== null;
+      return {
+        exists: true,
+        isDeleted: isDeleted,
+        id: json.opportunity.id,
+      };
+    }
+
+    return { exists: false, isDeleted: false };
+  } catch (error: any) {
+    console.warn(`   [Ingest] Warning: Status check failed: ${error.message}`);
+    return { exists: false, isDeleted: false };
+  }
+}
+
+export async function sendOpportunityToPlatform(payload: OpportunityPayload): Promise<{
+  success: boolean;
+  action: 'created' | 'updated' | 'skipped';
+  reason?: string;
+  id?: string;
+}> {
   const endpoint = process.env.GRANTS_INGEST_ENDPOINT_URL;
   const apiKey = process.env.GRANTS_INGEST_API_KEY;
 
@@ -45,9 +99,25 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
     throw new Error('GRANTS_INGEST_ENDPOINT_URL or GRANTS_INGEST_API_KEY is missing');
   }
 
+  // STEP 1: Check if record exists and was deleted
+  const status = await checkOpportunityStatus(payload.external_id, endpoint, apiKey);
+
+  if (status.exists && status.isDeleted) {
+    console.log(`   [Ingest] ⏭️  Skipped - Record was deleted by user (ID: ${status.id})`);
+    return {
+      success: true,
+      action: 'skipped',
+      reason: 'deleted_by_user',
+      id: status.id,
+    };
+  }
+
+  // STEP 2: Send data (create or update)
   const body = transformPayload(payload);
 
-  console.log(`   [Ingest] Payload summary length: ${body.summary?.length || 0}`);
+  console.log(`   [Ingest] ${status.exists ? 'Updating' : 'Creating'} opportunity...`);
+  console.log(`   [Ingest] Title: ${body.title}`);
+  console.log(`   [Ingest] External ID: ${body.external_id}`);
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -65,8 +135,15 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
   }
 
   const json = await res.json().catch(() => ({}));
+  const action = json.action ?? (status.exists ? 'updated' : 'created');
+  
   console.log(
-    `   [Ingest] ✅ ${json.action ?? 'created'} - Opportunity ID: ${json.opportunity?.id ?? 'N/A'}`,
+    `   [Ingest] ✅ ${action} - Opportunity ID: ${json.opportunity?.id ?? status.id ?? 'N/A'}`,
   );
-}
 
+  return {
+    success: true,
+    action: action,
+    id: json.opportunity?.id ?? status.id,
+  };
+}

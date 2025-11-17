@@ -6,6 +6,7 @@ import { sendOpportunityToPlatform } from './ingestClient.js';
 import type { OpportunityPayload } from './types.js';
 
 const PROCESSED_FILE = 'processed-grants.json';
+const DELETED_FILE = 'deleted-grants.json'; // Track deleted records
 
 function loadProcessed(): Set<string> {
   if (!fs.existsSync(PROCESSED_FILE)) {
@@ -21,6 +22,22 @@ function loadProcessed(): Set<string> {
 
 function saveProcessed(ids: Set<string>) {
   fs.writeFileSync(PROCESSED_FILE, JSON.stringify([...ids], null, 2));
+}
+
+function loadDeleted(): Set<string> {
+  if (!fs.existsSync(DELETED_FILE)) {
+    return new Set();
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(DELETED_FILE, 'utf8'));
+    return new Set(data);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeleted(ids: Set<string>) {
+  fs.writeFileSync(DELETED_FILE, JSON.stringify([...ids], null, 2));
 }
 
 function startOfToday(): Date {
@@ -76,11 +93,14 @@ async function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   const processed = loadProcessed();
+  const deleted = loadDeleted();
   const stats = {
     fetched: 0,
     skipped: 0,
     processed: 0,
-    sent: 0,
+    created: 0,
+    updated: 0,
+    deletedSkipped: 0,
     stale: 0,
     errors: 0,
   };
@@ -101,8 +121,15 @@ async function main() {
       console.log(`📄 Processing: ${item.sourceName}`);
       console.log(`   URL: ${item.url}`);
 
+      // Check if previously deleted by user
+      if (deleted.has(item.externalId)) {
+        console.log('   ⏭️  Previously deleted by user, skipping');
+        stats.deletedSkipped++;
+        continue;
+      }
+
       if (processed.has(item.externalId)) {
-        console.log('   ⏭️  Already processed, skipping');
+        console.log('   ⭐ Already processed recently, skipping');
         stats.skipped++;
         continue;
       }
@@ -127,10 +154,24 @@ async function main() {
           console.log(`   ℹ️  ${relevance.note}`);
         }
 
-        await sendOpportunityToPlatform(payload);
-        processed.add(item.externalId);
-        saveProcessed(processed);
-        stats.sent++;
+        const result = await sendOpportunityToPlatform(payload);
+        
+        if (result.action === 'skipped') {
+          // Record was deleted by user, add to deleted list
+          deleted.add(item.externalId);
+          saveDeleted(deleted);
+          stats.deletedSkipped++;
+        } else {
+          // Record created or updated
+          processed.add(item.externalId);
+          saveProcessed(processed);
+          
+          if (result.action === 'created') {
+            stats.created++;
+          } else if (result.action === 'updated') {
+            stats.updated++;
+          }
+        }
 
         if (apiDelay > 0) {
           await new Promise((resolve) => setTimeout(resolve, apiDelay));
@@ -148,12 +189,14 @@ async function main() {
   console.log('\n' + '═'.repeat(60));
   console.log('📊 RUN SUMMARY');
   console.log('─'.repeat(60));
-  console.log(`   Fetched:         ${stats.fetched}`);
-  console.log(`   Already Skipped: ${stats.skipped}`);
-  console.log(`   Processed:       ${stats.processed}`);
-  console.log(`   Successfully Sent: ${stats.sent}`);
-  console.log(`   Stale Skipped:   ${stats.stale}`);
-  console.log(`   Errors:          ${stats.errors}`);
+  console.log(`   Fetched:          ${stats.fetched}`);
+  console.log(`   Already Skipped:  ${stats.skipped}`);
+  console.log(`   Processed:        ${stats.processed}`);
+  console.log(`   Created:          ${stats.created}`);
+  console.log(`   Updated:          ${stats.updated}`);
+  console.log(`   Deleted Skipped:  ${stats.deletedSkipped}`);
+  console.log(`   Stale Skipped:    ${stats.stale}`);
+  console.log(`   Errors:           ${stats.errors}`);
   console.log('═'.repeat(60) + '\n');
 
   if (stats.errors === 0) {
