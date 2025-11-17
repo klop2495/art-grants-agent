@@ -1,0 +1,40 @@
+name: Grants Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_opportunities:
+        description: 'Number of opportunities to process'
+        default: '20'
+        required: false
+  schedule:
+    - cron: '0 9 * * *' # 09:00 UTC daily
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GRANTS_INGEST_API_KEY: ${{ secrets.GRANTS_INGEST_API_KEY }}
+      GRANTS_INGEST_ENDPOINT_URL: ${{ secrets.GRANTS_INGEST_ENDPOINT_URL }}
+      MAX_OPPORTUNITIES_PER_RUN: ${{ inputs.max_opportunities || '20' }}
+      API_DELAY_MS: '1200'
+      DEFAULT_LANGUAGE: 'en'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Run grants agent
+        run: npm start
+
