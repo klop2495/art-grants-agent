@@ -31,7 +31,7 @@ const OpportunitySchema = z.object({
     .union([z.string(), z.array(z.string())])
     .transform((val) => {
       if (Array.isArray(val)) {
-        return val.filter(s => s && s.trim().length > 0).join('\n\n');
+        return val.filter((s) => s && s.trim().length > 0).join('\n\n');
       }
       return val;
     })
@@ -45,35 +45,51 @@ const OpportunitySchema = z.object({
     'fair_exhibition',
   ]),
   organization_name: z.string().min(3),
-  location: z.string().optional(),
-  country: z.string().optional(),
-  city: z.string().optional(),
-  funding_amount: z.string().optional(),
-  participation_cost: z.string().optional(),
+  location: z.string().nullable().optional(),
+  country: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  funding_amount: z.string().nullable().optional(),
+  participation_cost: z.string().nullable().optional(),
   application_deadline: ApplicationDeadlineSchema,
   program_dates: z
     .object({
       start_date: z
         .string()
-        .refine((value) => !Number.isNaN(Date.parse(value)), {
-          message: 'start_date must be ISO 8601 date',
-        })
+        .nullable()
+        .refine(
+          (value) => {
+            if (value === null) return true;
+            return !Number.isNaN(Date.parse(value));
+          },
+          {
+            message: 'start_date must be ISO 8601 date or null',
+          },
+        )
         .optional(),
       end_date: z
         .string()
-        .refine((value) => !Number.isNaN(Date.parse(value)), {
-          message: 'end_date must be ISO 8601 date',
-        })
+        .nullable()
+        .refine(
+          (value) => {
+            if (value === null) return true;
+            return !Number.isNaN(Date.parse(value));
+          },
+          {
+            message: 'end_date must be ISO 8601 date or null',
+          },
+        )
         .optional(),
-      timezone: z.string().optional(),
+      timezone: z.string().nullable().optional(),
     })
+    .nullable()
     .optional(),
-  eligibility: z.array(z.string()).optional(),
-  disciplines: z.array(z.string()).optional(),
-  requirements: z.array(z.string()).optional(),
-  benefits: z.array(z.string()).optional(),
+  eligibility: z.array(z.string()).nullable().optional(),
+  disciplines: z.array(z.string()).nullable().optional(),
+  requirements: z.array(z.string()).nullable().optional(),
+  benefits: z.array(z.string()).nullable().optional(),
   link_to_apply: z
     .string()
+    .nullable()
     .transform((val) => {
       if (!val || val === '' || val === 'Not specified') return 'Not specified';
       // Ensure it's a complete URL
@@ -97,6 +113,7 @@ const OpportunitySchema = z.object({
     .optional(),
   contact_email: z
     .string()
+    .nullable()
     .transform((val) => {
       if (!val || val === 'Not specified') return '';
       return val.trim();
@@ -109,7 +126,7 @@ const OpportunitySchema = z.object({
       { message: 'contact_email must be valid email or empty string' },
     )
     .optional(),
-  language: z.string().optional(),
+  language: z.string().nullable().optional(),
   source: z.object({
     name: z.string(),
     url: z.string().url(),
@@ -117,8 +134,9 @@ const OpportunitySchema = z.object({
   fact_check: z
     .object({
       confidence: z.enum(['verified', 'official_single_source', 'low_confidence']),
-      notes: z.string().optional(),
+      notes: z.string().nullable().optional(),
     })
+    .nullable()
     .optional(),
 });
 
@@ -139,13 +157,19 @@ CRITICAL FORMAT REQUIREMENTS:
    - If not found or incomplete URL, return "Not specified"
 5. "contact_email": 
    - MUST be valid format (user@domain.com)
-   - If not found, return empty string ""
+   - If not found, return empty string "" or null
    - Do NOT return "Not specified" for email
-6. If you cannot find information, use these defaults:
-   - funding_amount: "Not specified"
-   - participation_cost: "Not specified"
-   - link_to_apply: "Not specified"
-   - contact_email: "" (empty string)
+6. For optional fields you cannot find:
+   - Return null (not "Not specified", not empty string, just null)
+   - Exception: link_to_apply → "Not specified"
+   - Exception: contact_email → "" (empty string)
+
+IMPORTANT: Use null for missing optional data:
+- funding_amount: null if not found
+- participation_cost: null if not found
+- country, city, location: null if not found
+- program_dates: null if not found
+- eligibility, disciplines, requirements, benefits: null if not found (NOT empty arrays [])
 
 EXTRACTION PRIORITY:
 1. Look for EXPLICIT information first
@@ -157,37 +181,37 @@ EXTRACTION PRIORITY:
 
 FIELDS TO EXTRACT:
 {
-  "title": "Grant/Residency name (string, required)",
-  "summary": "Brief description (minimum 50 characters, required)",
-  "content": "Full description - can be string OR array of strings (minimum 200 chars total)",
-  "program_type": "grant|residency|open_call|fellowship|competition|fair_exhibition",
-  "organization_name": "Organization name (required)",
-  "country": "Country name or null",
-  "city": "City name or null",
-  "location": "Full location string or null",
-  "funding_amount": "Amount like '€1,200/month', '$50,000', 'Free', or 'Not specified'",
-  "participation_cost": "Fee like '$30 application fee', 'Free', or 'Not specified'",
-  "application_deadline": "ISO 8601 date (YYYY-MM-DD) or 'TBD'",
+  "title": "string (required)",
+  "summary": "string, min 50 chars (required)",
+  "content": "string or array of strings, min 200 chars total (required)",
+  "program_type": "grant|residency|open_call|fellowship|competition|fair_exhibition (required)",
+  "organization_name": "string (required)",
+  "country": "string or null",
+  "city": "string or null",
+  "location": "string or null",
+  "funding_amount": "string like '€1,200/month' or 'Free' or null",
+  "participation_cost": "string like '$30 fee' or 'Free' or null",
+  "application_deadline": "ISO 8601 date (YYYY-MM-DD) or 'TBD' (required)",
   "program_dates": {
     "start_date": "ISO 8601 date or null",
     "end_date": "ISO 8601 date or null",
     "timezone": "string or null"
-  },
-  "eligibility": ["requirement1", "requirement2"] or null,
-  "disciplines": ["visual arts", "music", etc.] or null,
-  "requirements": ["requirement1"] or null,
-  "benefits": ["benefit1"] or null,
-  "link_to_apply": "COMPLETE URL (https://...) or 'Not specified'",
-  "contact_email": "valid@email.com or empty string (NOT 'Not specified')",
-  "language": "en",
+  } or null,
+  "eligibility": ["string", "string"] or null,
+  "disciplines": ["string", "string"] or null,
+  "requirements": ["string", "string"] or null,
+  "benefits": ["string", "string"] or null,
+  "link_to_apply": "complete URL or 'Not specified'",
+  "contact_email": "email@domain.com or empty string ''",
+  "language": "string or null",
   "source": {
-    "name": "Organization name",
-    "url": "Source URL"
-  },
+    "name": "string",
+    "url": "string"
+  } (required),
   "fact_check": {
-    "confidence": "verified" | "official_single_source" | "low_confidence",
-    "notes": "optional notes"
-  }
+    "confidence": "verified|official_single_source|low_confidence",
+    "notes": "string or null"
+  } or null
 }
 
 EXAMPLE VALID OUTPUT 1 (content as string):
@@ -509,15 +533,38 @@ Return ONLY valid JSON, no markdown, no code blocks, no explanations.
         parsed.contact_email = '';
       }
 
-      // STEP 6: Default values for optional fields
-      if (!parsed.funding_amount) {
-        parsed.funding_amount = 'Not specified';
+      // STEP 6: Normalize null/empty values for optional fields
+      if (parsed.funding_amount === null || parsed.funding_amount === '' || parsed.funding_amount === 'Not specified') {
+        parsed.funding_amount = null;
       }
-      if (!parsed.participation_cost) {
-        parsed.participation_cost = 'Not specified';
+      if (parsed.participation_cost === null || parsed.participation_cost === '' || parsed.participation_cost === 'Not specified') {
+        parsed.participation_cost = null;
+      }
+      if (parsed.country === null || parsed.country === '') {
+        parsed.country = null;
+      }
+      if (parsed.city === null || parsed.city === '') {
+        parsed.city = null;
+      }
+      if (parsed.location === null || parsed.location === '') {
+        parsed.location = null;
       }
 
-      // STEP 7: Ensure source is set
+      // STEP 7: Convert empty arrays to null
+      if (parsed.eligibility && Array.isArray(parsed.eligibility) && parsed.eligibility.length === 0) {
+        parsed.eligibility = null;
+      }
+      if (parsed.disciplines && Array.isArray(parsed.disciplines) && parsed.disciplines.length === 0) {
+        parsed.disciplines = null;
+      }
+      if (parsed.requirements && Array.isArray(parsed.requirements) && parsed.requirements.length === 0) {
+        parsed.requirements = null;
+      }
+      if (parsed.benefits && Array.isArray(parsed.benefits) && parsed.benefits.length === 0) {
+        parsed.benefits = null;
+      }
+
+      // STEP 8: Ensure source is set
       if (!parsed.source) {
         parsed.source = {
           name: rawOpportunity.sourceName,
@@ -525,10 +572,11 @@ Return ONLY valid JSON, no markdown, no code blocks, no explanations.
         };
       }
 
-      // STEP 8: Set default fact_check if missing
+      // STEP 9: Set default fact_check if missing
       if (!parsed.fact_check) {
         parsed.fact_check = {
           confidence: 'official_single_source' as const,
+          notes: null,
         };
       }
 
