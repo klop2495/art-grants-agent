@@ -103,12 +103,12 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
   const status = await checkOpportunityStatus(payload.external_id, endpoint, apiKey);
 
   if (status.exists && status.isDeleted) {
-    console.log(`   [Ingest] ⏭️  Skipped - Record was deleted by user (ID: ${status.id})`);
+    console.log(`   [Ingest] ⏭️  Skipped - Record was deleted by user (ID: ${status.id ?? 'unknown'})`);
     return {
       success: true,
       action: 'skipped',
       reason: 'deleted_by_user',
-      id: status.id,
+      id: status.id ?? undefined,
     };
   }
 
@@ -144,6 +144,6 @@ export async function sendOpportunityToPlatform(payload: OpportunityPayload): Pr
   return {
     success: true,
     action: action,
-    id: json.opportunity?.id ?? status.id,
+    id: json.opportunity?.id ?? status.id ?? undefined,
   };
 }
