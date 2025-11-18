@@ -104,9 +104,10 @@ async function main() {
   console.log('🎯 Art Grants Agent - Run Started');
   console.log(`📅 ${new Date().toISOString()}`);
   console.log(`🔧 Model: ${process.env.OPENAI_MODEL ?? 'gpt-4o'}`);
-  console.log(
-    `🎯 Max opportunities: ${process.env.MAX_OPPORTUNITIES_PER_RUN ?? '20'}`,
-  );
+  const maxPerRunEnv = process.env.MAX_OPPORTUNITIES_PER_RUN;
+  const maxPerRunLabel =
+    maxPerRunEnv && maxPerRunEnv.trim().length > 0 ? maxPerRunEnv : '∞ (no limit)';
+  console.log(`🎯 Max opportunities: ${maxPerRunLabel}`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   const processed = loadProcessed();

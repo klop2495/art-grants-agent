@@ -421,10 +421,9 @@ async function fetchHtml(url: string): Promise<string | null> {
   }
 }
 
-async function fetchDirectInstitutionPages(max: number): Promise<RawOpportunity[]> {
+async function fetchDirectInstitutionPages(): Promise<RawOpportunity[]> {
   const results: RawOpportunity[] = [];
   for (const src of DIRECT_INSTITUTION_PAGES) {
-    if (results.length >= max) break;
     console.log(`\n[fetchSources] 🏛️ Direct: ${src.sourceName}`);
     const html = await fetchHtml(src.url);
     if (!html) continue;
@@ -452,7 +451,7 @@ function isBlocked(url: string): boolean {
   }
 }
 
-async function fetchInstitutionSearchResults(max: number): Promise<RawOpportunity[]> {
+async function fetchInstitutionSearchResults(): Promise<RawOpportunity[]> {
   const collected: RawOpportunity[] = [];
 
   if (!process.env.SEARCH_API_KEY) {
@@ -462,7 +461,6 @@ async function fetchInstitutionSearchResults(max: number): Promise<RawOpportunit
 
   for (const config of INSTITUTION_SEARCH_CONFIGS) {
     for (const query of config.queries) {
-      if (collected.length >= max) break;
       console.log(`\n[fetchSources] 🔎 Search: ${config.institution} — "${query}"`);
       const searchOptions: Parameters<typeof searchWeb>[1] = {
         count: config.maxResults ?? 3,
@@ -478,8 +476,6 @@ async function fetchInstitutionSearchResults(max: number): Promise<RawOpportunit
         if (!result.url || isBlocked(result.url)) {
           continue;
         }
-        if (collected.length >= max) break;
-
         const html = await fetchHtml(result.url);
         if (!html) continue;
         const selector = getSelector(result.url);
@@ -501,10 +497,14 @@ async function fetchInstitutionSearchResults(max: number): Promise<RawOpportunit
 }
 
 export async function fetchRawOpportunities(): Promise<RawOpportunity[]> {
-  const max = parseInt(process.env.MAX_OPPORTUNITIES_PER_RUN ?? '20', 10);
+  const maxEnv = process.env.MAX_OPPORTUNITIES_PER_RUN;
+  const max =
+    typeof maxEnv === 'string' && maxEnv.trim().length > 0
+      ? Number.parseInt(maxEnv, 10)
+      : undefined;
 
-  const direct = await fetchDirectInstitutionPages(Math.ceil(max / 2));
-  const institutionalSearch = await fetchInstitutionSearchResults(max);
+  const direct = await fetchDirectInstitutionPages();
+  const institutionalSearch = await fetchInstitutionSearchResults();
 
   const combined = [...direct, ...institutionalSearch];
   const deduped = new Map<string, RawOpportunity>();
@@ -514,7 +514,11 @@ export async function fetchRawOpportunities(): Promise<RawOpportunity[]> {
     }
   }
 
-  return Array.from(deduped.values()).slice(0, max);
+  const unique = Array.from(deduped.values());
+  if (typeof max === 'number' && Number.isFinite(max)) {
+    return unique.slice(0, max);
+  }
+  return unique;
 }
 
 
